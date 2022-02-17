@@ -3,18 +3,27 @@ using Discord.WebSocket;
 using Microsoft.Extensions.DependencyInjection;
 using Smeuj.Pottekijker;
 using LiteDB;
+using System.Linq.Expressions;
 
 const string DatabasePath = "voorraadkast.db";
 
 Console.Title = "Pottekijker";
 
-if (args.Length == 1 && args[0] is "show") {
+if (args.Length >= 1 && args[0] is "show") {
+    int limit = 10;
+    if (args.Length >= 2)
+        int.TryParse(args[1], out limit);
     using var db = new LiteDatabase(DatabasePath);
     var smeuj = db.GetCollection<Smeu>("smeuj");
-    var smeuigste = smeuj.Query().OrderByDescending(smeu => smeu.Pindakaas)
-        .Where(smeu => smeu.Pindakaas != 0).Limit(10).ToList();
-    var smerigste = smeuj.Query().OrderByDescending(smeu => smeu.Levertraan)
-        .Where(smeu => smeu.Levertraan != 0).Limit(10).ToList();
+    
+    Expression<Func<Smeu, int>> score =
+        (Smeu smeu) => smeu.Pindakaas - smeu.Levertraan;
+    var smeuigste = smeuj.Query()
+        .OrderByDescending(score)
+        .Where(smeu => smeu.Pindakaas != 0).Limit(limit).ToList();
+    var smerigste = smeuj.Query()
+        .OrderBy(score)
+        .Where(smeu => smeu.Levertraan != 0).Limit(limit).ToList();
 
     Console.WriteLine("======== De smeuïgste smeuj ========");
     foreach (var smeuigst in smeuigste)
@@ -49,14 +58,16 @@ client.Ready += async () => {
         File.Delete(DatabasePath);
 
     var channel = await client.GetChannelAsync(config.Channel) as ITextChannel;
-    var batches = channel!.GetMessagesAsync();
+    var batches = channel!.GetMessagesAsync(limit: int.MaxValue);
     
     using var db = new LiteDatabase(DatabasePath);
     var smeuj = db.GetCollection<Smeu>("smeuj");
 
-    await foreach (var messages in batches)
+    await foreach (var messages in batches) {
         foreach (var message in messages)
             StorePotten(message, smeuj);
+        Console.WriteLine("Batch finished.");
+    }        
 
     smeuj.EnsureIndex(smeu => smeu.Pindakaas);
     smeuj.EnsureIndex(smeu => smeu.Levertraan);
